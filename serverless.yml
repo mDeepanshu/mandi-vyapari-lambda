@@ -1,0 +1,29 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: make73
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: mandiVyapari
+useDotenv: true
+
+provider:
+  name: aws
+  region: ap-southeast-1
+  runtime: nodejs22.x
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL}
+    PUBLIC_KEY: BFcAYkpjplEVe5f4dBBRpNZTlk-Fp-mdtqdex0DZEGiEIFtNy8GaM1Fge4UmIlf0n2yvyKrr9mUM-K88Wih5Djs
+    PRIVATE_KEY: pSenjSgRTQQQfqvE-bGno7QuioA7rpYcI-n9TJXwmFg
+  # Uncomment to easily set up a custom domain. Read the docs for more details:
+  # https://www.serverless.com/framework/docs/providers/aws/guide/domains
+  # domain: api.example.com
+
+functions:
+  api:
+    handler: src/app.app
+    events:
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+plugins:
+  - serverless-offline
+
