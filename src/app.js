@@ -34,10 +34,9 @@ app.post("/subscribe", async (req, res) => {
   try {
     const sub = req.body;
     const pushSub = sub.subscription;
-    console.log("Received subscription:", pushSub);
-
+    
     const existing = await sql`
-      SELECT * FROM subscriptions WHERE endpoint = ${pushSub.endpoint};
+      SELECT * FROM subscriptions WHERE vyapariId = ${sub.vyapariId};
     `;
 
     if (existing.length === 0) {
@@ -61,9 +60,6 @@ app.post("/subscribe", async (req, res) => {
 });
 
 app.post("/sendNotification/:vyapariId", async (req, res) => {
-  console.log("Public Key:", secretkeys.publicKey);
-console.log("Private Key:", secretkeys.privateKey);
-
   webpush.setVapidDetails("mailto:example@yourdomain.org", secretkeys.publicKey, secretkeys.privateKey);
   const sql = await dbClient();
 
@@ -80,9 +76,8 @@ console.log("Private Key:", secretkeys.privateKey);
 
     const payload = JSON.stringify({
       notification: {
-        title: "Hello Vyapari!",
-        body: `This is a notification for Vyapari ID ${vyapariId}`,
-        data: { url: "https://example.com" },
+        title: "VASULI RECEIPT/वसूली रसीद",
+        body: `Amount/राशि: ${req.body.amount}, Date/तारीख: ${req.body.date}`,
       },
     });
 
@@ -95,7 +90,6 @@ console.log("Private Key:", secretkeys.privateKey);
             auth: row.auth,
           },
         };
-        console.log("rows:", sub);
 
         return webpush.sendNotification(sub, payload).catch((err) => {
           console.error("Push error", err);
