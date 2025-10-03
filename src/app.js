@@ -52,10 +52,10 @@ app.post("/subscribe", async (req, res) => {
       `;
     }
 
-    res.status(201).json({ message: "Subscription saved!" });
+    return res.status(201).json({ message: "Subscription saved!" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to save subscription" });
+    return res.status(500).json({ error: "Failed to save subscription" });
   }
 });
 
@@ -97,10 +97,9 @@ app.post("/sendNotification/:vyapariId", async (req, res) => {
       })
     );
 
-    res.status(200).json({ message: `Notification sent to vyapariId ${vyapariId}` });
+    return res.status(200).json({ message: `Notification sent to vyapariId ${vyapariId}` });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.toString() });
+    return res.status(500).json({ error: err.toString() });
   }
 });
 
