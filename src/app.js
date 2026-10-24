@@ -32,25 +32,20 @@ app.post("/subscribe", async (req, res) => {
   const sql = await dbClient();
 
   try {
-    const sub = req.body;
-    const pushSub = sub.subscription;
-    
-    const existing = await sql`
-      SELECT * FROM subscriptions WHERE vyapariId = ${sub.vyapariId};
-    `;
-
-    if (existing.length === 0) {
-      await sql`
-        INSERT INTO subscriptions (vyapariId, endpoint, p256dh, auth)
-        VALUES (${sub.vyapariId}, ${pushSub.endpoint}, ${pushSub.keys.p256dh}, ${pushSub.keys.auth});
-      `;
-    } else {
-      await sql`
-        UPDATE subscriptions
-        SET p256dh = ${pushSub.keys.p256dh}, auth = ${pushSub.keys.auth}
-        WHERE vyapariId = ${pushSub.vyapariId} AND endpoint = ${pushSub.endpoint};
-      `;
+    const { vyapariId, subscription: pushSub } = req.body;
+    if (!vyapariId || vyapariId === "undefined" || !pushSub?.endpoint || !pushSub?.keys) {
+      return res.status(400).json({ error: "vyapariId and subscription are required" });
     }
+
+    // Keep one subscription per trader: always the latest phone/browser. Replacing the row
+    // (instead of updating it) means a new phone or reinstall is saved, not silently ignored.
+    await sql`
+      DELETE FROM subscriptions WHERE vyapariId = ${vyapariId} OR endpoint = ${pushSub.endpoint};
+    `;
+    await sql`
+      INSERT INTO subscriptions (vyapariId, endpoint, p256dh, auth)
+      VALUES (${vyapariId}, ${pushSub.endpoint}, ${pushSub.keys.p256dh}, ${pushSub.keys.auth});
+    `;
 
     return res.status(201).json({ message: "Subscription saved!" });
   } catch (err) {
@@ -74,15 +69,22 @@ app.post("/sendNotification/:vyapariId", async (req, res) => {
       return res.status(404).json({ error: "No subscription found for this vyapari" });
     }
 
+    const { amount, date, ledger } = req.body;
+    const content = ledger
+      ? { title: "LEDGER RECEIVED/लेजर प्राप्त हुआ", body: "आपका नया लेजर आ गया है। देखने के लिए टैप करें।" }
+      : { title: "VASULI RECEIPT/वसूली रसीद", body: `Amount/राशि: ${amount}, Date/तारीख: ${date}` };
+
     const payload = JSON.stringify({
       notification: {
-        title: "VASULI RECEIPT/वसूली रसीद",
-        body: `Amount/राशि: ${req.body.amount}, Date/तारीख: ${req.body.date}`,
+        ...content,
+        icon: "icons/icon-192x192.png",
+        // Angular's service worker only opens the app on tap when this is set
+        data: { onActionClick: { default: { operation: "focusLastFocusedOrOpen", url: "/" } } },
       },
     });
 
-    await Promise.all(
-      rows.map((row) => {
+    const results = await Promise.all(
+      rows.map(async (row) => {
         const sub = {
           endpoint: row.endpoint,
           keys: {
@@ -91,13 +93,23 @@ app.post("/sendNotification/:vyapariId", async (req, res) => {
           },
         };
 
-        return webpush.sendNotification(sub, payload).catch((err) => {
-          console.error("Push error", err);
-        });
+        try {
+          await webpush.sendNotification(sub, payload);
+          return true;
+        } catch (err) {
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            // Subscription expired or the app was removed from that phone; drop it
+            await sql`DELETE FROM subscriptions WHERE endpoint = ${row.endpoint};`;
+          } else {
+            console.error("Push error", err);
+          }
+          return false;
+        }
       })
     );
 
-    return res.status(200).json({ message: `Notification sent to vyapariId ${vyapariId}` });
+    const sent = results.filter(Boolean).length;
+    return res.status(200).json({ message: `Notification sent to vyapariId ${vyapariId}`, sent, failed: results.length - sent });
   } catch (err) {
     return res.status(500).json({ error: err.toString() });
   }
