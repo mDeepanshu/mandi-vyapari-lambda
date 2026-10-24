@@ -11,7 +11,11 @@ provider:
   region: ap-southeast-1
   runtime: nodejs22.x
   environment:
-    DATABASE_URL: ${env:DATABASE_URL}
+    # Per stage from .env.<stage>: HIS (dev/prod) uses DATABASE_URL (Neon); HMB uses SUBSCRIPTIONS_SUPABASE_URL/KEY (not SUPABASE_*, which may be set machine-wide)
+    DATABASE_URL: ${env:DATABASE_URL, 'none'}
+    SUBSCRIPTIONS_SUPABASE_URL: ${env:SUBSCRIPTIONS_SUPABASE_URL, 'none'}
+    SUBSCRIPTIONS_SUPABASE_KEY: ${env:SUBSCRIPTIONS_SUPABASE_KEY, 'none'}
+    ALLOWED_ORIGINS: ${env:ALLOWED_ORIGINS, 'none'}
     PUBLIC_KEY: BFcAYkpjplEVe5f4dBBRpNZTlk-Fp-mdtqdex0DZEGiEIFtNy8GaM1Fge4UmIlf0n2yvyKrr9mUM-K88Wih5Djs
     PRIVATE_KEY: pSenjSgRTQQQfqvE-bGno7QuioA7rpYcI-n9TJXwmFg
   # Uncomment to easily set up a custom domain. Read the docs for more details:

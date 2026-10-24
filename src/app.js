@@ -2,14 +2,18 @@ const serverless = require("serverless-http");
 const express = require("express");
 const app = express();
 const { neon } = require("@neondatabase/serverless");
+const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 const webpush = require("web-push");
 const cors = require("cors");
 
+// Per-stage allowlist (comma-separated ALLOWED_ORIGINS); defaults are the HIS apps
+const DEFAULT_ORIGINS = ["https://mva.make73.com", "https://mandi-vyapari.vercel.app", "https://mandi-application-seven.vercel.app"];
+const envOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter((o) => o.startsWith("https://"));
+
 app.use(
   cors({
-    // Vyapari app (production domain + Vercel URL) and mandi-application, which sends notifications
-    origin: ["https://mva.make73.com", "https://mandi-vyapari.vercel.app", "https://mandi-application-seven.vercel.app"],
+    origin: envOrigins.length ? envOrigins : DEFAULT_ORIGINS,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true, // if you use cookies or auth headers
   })
@@ -24,29 +28,61 @@ const secretkeys = {
   privateKey: process.env.PRIVATE_KEY,
 };
 
-async function dbClient() {
+// Each client keeps subscriptions in its own database: HIS in Neon (DATABASE_URL, table
+// "subscriptions"), HMB in its Supabase project (SUBSCRIPTIONS_SUPABASE_URL/KEY, table "push_subscriptions").
+// Both stores keep one subscription per trader: always the latest phone/browser.
+function neonStore() {
   const sql = neon(process.env.DATABASE_URL);
-  return sql;
+  return {
+    async replace(vyapariId, pushSub) {
+      // Replacing the row (instead of updating it) means a new phone or reinstall is saved
+      await sql`
+        DELETE FROM subscriptions WHERE vyapariId = ${vyapariId} OR endpoint = ${pushSub.endpoint};
+      `;
+      await sql`
+        INSERT INTO subscriptions (vyapariId, endpoint, p256dh, auth)
+        VALUES (${vyapariId}, ${pushSub.endpoint}, ${pushSub.keys.p256dh}, ${pushSub.keys.auth});
+      `;
+    },
+    find: (vyapariId) => sql`SELECT * FROM subscriptions WHERE vyapariId = ${vyapariId};`,
+    remove: (endpoint) => sql`DELETE FROM subscriptions WHERE endpoint = ${endpoint};`,
+  };
 }
 
-app.post("/subscribe", async (req, res) => {
-  const sql = await dbClient();
+function supabaseStore() {
+  const table = () =>
+    createClient(process.env.SUBSCRIPTIONS_SUPABASE_URL, process.env.SUBSCRIPTIONS_SUPABASE_KEY, { auth: { persistSession: false } }).from("push_subscriptions");
+  const check = ({ data, error }) => {
+    if (error) throw new Error(error.message);
+    return data;
+  };
+  return {
+    async replace(vyapariId, pushSub) {
+      check(await table().delete().eq("vyapariid", vyapariId));
+      check(
+        await table().upsert({
+          endpoint: pushSub.endpoint,
+          vyapariid: vyapariId,
+          p256dh: pushSub.keys.p256dh,
+          auth: pushSub.keys.auth,
+        })
+      );
+    },
+    find: async (vyapariId) => check(await table().select("endpoint, p256dh, auth").eq("vyapariid", vyapariId)),
+    remove: async (endpoint) => check(await table().delete().eq("endpoint", endpoint)),
+  };
+}
 
+const store = () => ((process.env.SUBSCRIPTIONS_SUPABASE_URL || "").startsWith("https://") ? supabaseStore() : neonStore());
+
+app.post("/subscribe", async (req, res) => {
   try {
     const { vyapariId, subscription: pushSub } = req.body;
     if (!vyapariId || vyapariId === "undefined" || !pushSub?.endpoint || !pushSub?.keys) {
       return res.status(400).json({ error: "vyapariId and subscription are required" });
     }
 
-    // Keep one subscription per trader: always the latest phone/browser. Replacing the row
-    // (instead of updating it) means a new phone or reinstall is saved, not silently ignored.
-    await sql`
-      DELETE FROM subscriptions WHERE vyapariId = ${vyapariId} OR endpoint = ${pushSub.endpoint};
-    `;
-    await sql`
-      INSERT INTO subscriptions (vyapariId, endpoint, p256dh, auth)
-      VALUES (${vyapariId}, ${pushSub.endpoint}, ${pushSub.keys.p256dh}, ${pushSub.keys.auth});
-    `;
+    await store().replace(vyapariId, pushSub);
 
     return res.status(201).json({ message: "Subscription saved!" });
   } catch (err) {
@@ -57,14 +93,12 @@ app.post("/subscribe", async (req, res) => {
 
 app.post("/sendNotification/:vyapariId", async (req, res) => {
   webpush.setVapidDetails("mailto:example@yourdomain.org", secretkeys.publicKey, secretkeys.privateKey);
-  const sql = await dbClient();
+  const db = store();
 
   try {
     const { vyapariId } = req.params;
 
-    const rows = await sql`
-      SELECT * FROM subscriptions WHERE vyapariId = ${vyapariId};
-    `;
+    const rows = await db.find(vyapariId);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: "No subscription found for this vyapari" });
@@ -100,7 +134,7 @@ app.post("/sendNotification/:vyapariId", async (req, res) => {
         } catch (err) {
           if (err.statusCode === 404 || err.statusCode === 410) {
             // Subscription expired or the app was removed from that phone; drop it
-            await sql`DELETE FROM subscriptions WHERE endpoint = ${row.endpoint};`;
+            await db.remove(row.endpoint);
           } else {
             console.error("Push error", err);
           }

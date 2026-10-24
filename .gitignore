@@ -1,2 +1,5 @@
 node_modules
 .serverless
+
+# Secrets for the HMB stage
+.env.hmb
