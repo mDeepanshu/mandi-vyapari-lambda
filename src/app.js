@@ -8,7 +8,8 @@ const cors = require("cors");
 
 app.use(
   cors({
-    origin: "https://mandi-vyapari.vercel.app", // replace with your deployed FE URL
+    // Vyapari app (production domain + Vercel URL) and mandi-application, which sends notifications
+    origin: ["https://mva.make73.com", "https://mandi-vyapari.vercel.app", "https://mandi-application-seven.vercel.app"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true, // if you use cookies or auth headers
   })
