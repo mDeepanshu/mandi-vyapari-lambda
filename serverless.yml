@@ -11,6 +11,8 @@ provider:
   region: ap-southeast-1
   runtime: nodejs22.x
   environment:
+    # app.js picks HMB vs HIS from this, not from which DB vars are set
+    STAGE: ${sls:stage}
     # Per stage from .env.<stage>: HIS (dev/prod) uses DATABASE_URL (Neon); HMB uses SUBSCRIPTIONS_SUPABASE_URL/KEY (not SUPABASE_*, which may be set machine-wide)
     DATABASE_URL: ${env:DATABASE_URL, 'none'}
     SUBSCRIPTIONS_SUPABASE_URL: ${env:SUBSCRIPTIONS_SUPABASE_URL, 'none'}

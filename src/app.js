@@ -7,9 +7,15 @@ require("dotenv").config();
 const webpush = require("web-push");
 const cors = require("cors");
 
+// The hmb stage serves HMB; every other stage serves HIS. Decided by the stage
+// name (set in serverless.yml), never by which env vars happen to be present,
+// so HMB can't fall back to HIS's database or HIS's allowed sites.
+const IS_HMB = process.env.STAGE === "hmb";
+
 // Per-stage allowlist (comma-separated ALLOWED_ORIGINS); defaults are the HIS apps
 const DEFAULT_ORIGINS = ["https://mva.make73.com", "https://mandi-vyapari.vercel.app", "https://mandi-application-seven.vercel.app"];
 const envOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter((o) => o.startsWith("https://"));
+if (IS_HMB && !envOrigins.length) throw new Error("hmb stage needs ALLOWED_ORIGINS (.env.hmb); refusing HIS defaults");
 
 app.use(
   cors({
@@ -73,7 +79,15 @@ function supabaseStore() {
   };
 }
 
-const store = () => ((process.env.SUBSCRIPTIONS_SUPABASE_URL || "").startsWith("https://") ? supabaseStore() : neonStore());
+const store = () => {
+  if (IS_HMB) {
+    if (!(process.env.SUBSCRIPTIONS_SUPABASE_URL || "").startsWith("https://")) {
+      throw new Error("hmb stage needs SUBSCRIPTIONS_SUPABASE_URL/KEY; refusing to use HIS's Neon database");
+    }
+    return supabaseStore();
+  }
+  return neonStore();
+};
 
 app.post("/subscribe", async (req, res) => {
   try {
